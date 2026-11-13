@@ -236,7 +236,7 @@ jobs:
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag facturation:candidate "$repo:$GITHUB_SHA"
           docker push -q "$repo:$GITHUB_SHA"
-          image=$(docker inspect --format '{{index .RepoDigests 0}}' "$repo:$GITHUB_SHA")
+          image=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$GITHUB_SHA" | grep "^$repo@sha256:")
           docker logout ghcr.io
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "Image publiee (empreinte immuable) : \`$image\`" >> "$GITHUB_STEP_SUMMARY"
