@@ -1,0 +1,334 @@
+# Pipeline DevSecOps "fail-fast" : 8 jobs enchaines par "needs".
+# Le PREMIER job qui detecte un probleme bloquant echoue => tous les jobs suivants
+# sont "skipped" : rien n'est construit, rien n'est deploye.
+#   1 secrets_scan > 2 sast > 3 sonarcloud > 4 scan_dependencies > 5 unit_tests
+#   > 6 build_and_scan_image > 7 dast > 8 deploy (runner auto-heberge = ce PC)
+# Politique de blocage : security/policy.yml (appliquee par security/gate.py).
+# Derogations tracees : security/exemptions.yml.
+name: devsecops
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Moindre privilege : lecture seule par defaut, droits supplementaires job par job
+permissions:
+  contents: read
+
+concurrency:
+  group: devsecops-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Outils epingles par digest (memes versions que scripts/scan-local.ps1 et les hooks)
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  SEMGREP_IMAGE: semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  SYFT_IMAGE: anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+  GATE: python security/gate.py check --policy security/policy.yml --exemptions security/exemptions.yml --tool
+
+jobs:
+  # ------------------------------------------------------------------ 1. secrets
+  secrets_scan:
+    name: 1 - secrets_scan (gitleaks)
+    # un retour arriere force (scripts/demo-reset.ps1) ne relance pas le pipeline
+    if: ${{ !github.event.forced }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q pyyaml==6.0.3 && mkdir -p reports
+      - name: Gitleaks sur les fichiers ACTUELS (pas l'historique)
+        run: |
+          docker run --rm -v "$PWD:/src" "$GITLEAKS_IMAGE" dir /src --config /src/.gitleaks.toml \
+            --redact --no-banner --exit-code 0 --report-format json --report-path /src/reports/gitleaks.json
+          docker run --rm -v "$PWD:/src" "$GITLEAKS_IMAGE" dir /src --config /src/.gitleaks.toml \
+            --redact --no-banner --exit-code 0 --report-format sarif --report-path /src/reports/gitleaks.sarif
+      - name: Quality gate (tout secret bloque)
+        run: $GATE gitleaks
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 1-secrets-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 2. SAST
+  sast:
+    name: 2 - sast (semgrep + bandit)
+    needs: secrets_scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q pyyaml==6.0.3 bandit==1.9.4 && mkdir -p reports
+      - name: Semgrep (regles maison security/semgrep + p/python)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE" semgrep scan \
+            --config security/semgrep --config p/python --metrics off --quiet \
+            --json-output reports/semgrep.json --sarif-output reports/semgrep.sarif app
+      - name: Bandit (SAST Python)
+        run: |
+          bandit -q -r app/facturation -f json -o reports/bandit.json || true
+          bandit -q -r app/facturation -f html -o reports/bandit.html || true
+      - name: Quality gates (Semgrep ERROR ; Bandit HIGH avec confiance >= MEDIUM)
+        run: |
+          set +e  # executer les 2 gates, puis echouer si l'un des deux bloque
+          $GATE semgrep; s=$?
+          $GATE bandit;  b=$?
+          exit $((s | b))
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 2-sast-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 3. SonarCloud
+  sonarcloud:
+    name: 3 - sonarcloud (quality gate)
+    needs: sast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # historique complet : SonarCloud calcule le "nouveau code"
+          persist-credentials: false
+      - name: Recuperer les rapports SAST (centralises dans SonarCloud)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: 2-sast-reports
+          path: reports/
+      - name: Analyse SonarCloud + attente du quality gate
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Resume
+        if: ${{ !cancelled() }}
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          key=$(grep '^sonar.projectKey=' sonar-project.properties | cut -d= -f2)
+          {
+            echo "### SonarCloud : quality gate ${OUTCOME}"
+            echo "Analyse du code + import du rapport Semgrep (SARIF)."
+            echo "Tableau de bord : https://sonarcloud.io/dashboard?id=${key}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ 4. SCA + SBOM
+  scan_dependencies:
+    name: 4 - scan_dependencies (trivy fs + SBOM)
+    needs: sonarcloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q pyyaml==6.0.3 && mkdir -p reports
+      - name: Trivy fs (dependances Python)
+        run: |
+          # 2 essais : une panne reseau du telechargement de la base CVE n'est pas une faille
+          for i in 1 2; do
+            docker run --rm -v "$PWD:/src" -v trivy-cache:/root/.cache/trivy "$TRIVY_IMAGE" fs --quiet \
+              --scanners vuln --format json --output /src/reports/trivy-fs.json /src && break
+            sleep 15
+          done
+          docker run --rm -v "$PWD:/src" -v trivy-cache:/root/.cache/trivy "$TRIVY_IMAGE" convert \
+            --format template --template "@/contrib/html.tpl" --output /src/reports/trivy-fs.html \
+            /src/reports/trivy-fs.json || true
+      - name: SBOM CycloneDX (Syft)
+        run: |
+          docker run --rm -v "$PWD:/src" "$SYFT_IMAGE" dir:/src/app -o cyclonedx-json=/src/reports/sbom-cyclonedx.json
+          echo "SBOM CycloneDX : $(python -c "import json;print(len(json.load(open('reports/sbom-cyclonedx.json')).get('components',[])))") composants" >> "$GITHUB_STEP_SUMMARY"
+      - name: Quality gate (CVSS >= 7 avec correctif disponible)
+        run: $GATE trivy-fs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 4-dependencies-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 5. tests
+  unit_tests:
+    name: 5 - unit_tests (pytest, couverture >= 80 %)
+    needs: scan_dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q -r app/requirements.txt -r app/requirements-dev.txt && mkdir -p reports
+      - name: 6 tests (2 fonctionnels + 4 de non-regression securite)
+        working-directory: app
+        run: |
+          set -o pipefail
+          python -m pytest -v -p no:cacheprovider --cov=facturation --cov-fail-under=80 \
+            --cov-report=term --cov-report=html:../reports/coverage-html --cov-report=xml:../reports/coverage.xml \
+            --junitxml=../reports/junit.xml | tee ../reports/pytest.txt
+      - name: Resume
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Tests unitaires"
+            echo '```'
+            grep -E "PASSED|FAILED|TOTAL|passed|failed|Required" reports/pytest.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 5-tests-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 6. image
+  build_and_scan_image:
+    name: 6 - build_and_scan_image (trivy image + GHCR)
+    needs: unit_tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # uniquement ici : publication de l'image dans GHCR
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q pyyaml==6.0.3 && mkdir -p reports
+      - name: docker build
+        run: docker build -t facturation:candidate app
+      - name: Trivy image (OS + paquets Python de l'image)
+        run: |
+          for i in 1 2; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/src" \
+              -v trivy-cache:/root/.cache/trivy "$TRIVY_IMAGE" image --quiet --scanners vuln \
+              --format json --output /src/reports/trivy-image.json facturation:candidate && break
+            sleep 15
+          done
+          docker run --rm -v "$PWD:/src" -v trivy-cache:/root/.cache/trivy "$TRIVY_IMAGE" convert \
+            --format template --template "@/contrib/html.tpl" --output /src/reports/trivy-image.html \
+            /src/reports/trivy-image.json || true
+      - name: Quality gate image (CVSS >= 7 avec correctif disponible)
+        run: $GATE trivy-image
+      - name: Publication dans GHCR (seulement si l'image est saine)
+        id: push
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}/facturation"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag facturation:candidate "$repo:$GITHUB_SHA"
+          docker push -q "$repo:$GITHUB_SHA"
+          image=$(docker inspect --format '{{index .RepoDigests 0}}' "$repo:$GITHUB_SHA")
+          docker logout ghcr.io
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Image publiee (empreinte immuable) : \`$image\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 6-image-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 7. DAST
+  dast:
+    name: 7 - dast (OWASP ZAP API scan)
+    needs: build_and_scan_image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # tirer l'image depuis GHCR (lecture seule)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -q pyyaml==6.0.3 && mkdir -p reports && chmod 777 reports
+      - name: Lancer l'image publiee (meme empreinte que celle qui sera deployee)
+        env:
+          IMAGE: ${{ needs.build_and_scan_image.outputs.image }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker run -d --name app -p 8000:8000 "$IMAGE"
+          docker logout ghcr.io
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health && break; sleep 1; done
+      - name: OWASP ZAP API scan (a partir de /openapi.json)
+        run: |
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" "$ZAP_IMAGE" zap-api-scan.py \
+            -t http://localhost:8000/openapi.json -f openapi -J zap.json -r zap.html -w zap.md -I || true
+      - name: Quality gate DAST (risque High bloque)
+        run: $GATE zap
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: 7-dast-reports
+          path: reports/
+
+  # ------------------------------------------------------------------ 8. deploiement
+  deploy:
+    name: 8 - deploy (runner auto-heberge, port 8081)
+    needs: [build_and_scan_image, dast]
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read # tirer l'image depuis GHCR (lecture seule)
+    defaults:
+      run:
+        shell: powershell
+    env:
+      IMAGE: ${{ needs.build_and_scan_image.outputs.image }}
+    steps:
+      - name: Verifier que le runner peut utiliser Docker
+        run: |
+          $ErrorActionPreference = "Continue"
+          whoami
+          docker version --format "Docker client {{.Client.Version}} / serveur {{.Server.Version}}"
+          exit $LASTEXITCODE
+      - name: Tirer l'image par son empreinte exacte
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $env:GHCR_TOKEN | docker login ghcr.io -u $env:GITHUB_ACTOR --password-stdin
+          docker pull -q $env:IMAGE
+          $code = $LASTEXITCODE
+          docker logout ghcr.io
+          exit $code
+      - name: Remplacer le conteneur facturation-app (port 8081)
+        run: |
+          $ErrorActionPreference = "Continue"
+          docker rm -f facturation-app 2>$null | Out-Null
+          docker run -d --name facturation-app --restart unless-stopped -p 8081:8000 $env:IMAGE
+          exit $LASTEXITCODE
+      - name: Verifier /health
+        run: |
+          $ErrorActionPreference = "Continue"
+          for ($i = 0; $i -lt 30; $i++) {
+            $health = curl.exe -s http://localhost:8081/health
+            if ($health -match '"ok"') {
+              Add-Content $env:GITHUB_STEP_SUMMARY "### Deploiement OK`nhttp://localhost:8081/health -> $health`nImage : ``$env:IMAGE``"
+              exit 0
+            }
+            Start-Sleep -Seconds 2
+          }
+          docker logs facturation-app
+          exit 1

@@ -1,0 +1,96 @@
+// Lancer un controle depuis VS Code : Terminal > Run Task > Scan securite : ...
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Scan securite : gitleaks",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "gitleaks"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Scan securite : semgrep",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "semgrep"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Scan securite : bandit",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "bandit"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Scan securite : trivy",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "trivy"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Scan securite : tests",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "tests"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Scan securite : all",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/scan-local.ps1",
+        "-Only",
+        "all"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

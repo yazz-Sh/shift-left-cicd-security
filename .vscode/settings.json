@@ -1,0 +1,10 @@
+{
+  // SonarQube for IDE (SonarLint) : mode autonome, analyse a la frappe, aucun serveur requis.
+  // Semgrep dans l'IDE : memes regles que les hooks pre-commit et la CI
+  "semgrep.scan.configuration": ["security/semgrep", "p/python"],
+  "semgrep.scan.onlyGitDirty": false,
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.testing.pytestEnabled": true,
+  "python.testing.cwd": "${workspaceFolder}/app",
+  "python.testing.pytestArgs": ["tests"]
+}

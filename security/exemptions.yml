@@ -1,0 +1,17 @@
+# Registre des derogations (procedure : docs/PROCEDURE_DEROGATION.md)
+# Une derogation sans approbateur, justification ou date d'expiration est REFUSEE par le gate.
+# Une derogation expiree redevient automatiquement bloquante.
+# "location" est compare au champ Emplacement du resultat (sous-chaine).
+#
+# Modele (a copier dans la liste ci-dessous) :
+#  - id: EXC-2026-001
+#    tool: bandit                 # gitleaks | semgrep | bandit | trivy-fs | trivy-image | zap
+#    rule: B603                   # identifiant de regle ou CVE
+#    location: "app/facturation/main.py"
+#    justification: >-
+#      FAUX POSITIF. Expliquer pourquoi le resultat ne represente pas un risque reel.
+#    approved_by: "RSSI - Nom Prenom"
+#    ticket: SEC-001
+#    created: 2026-11-13
+#    expires: 2027-02-13
+exemptions: []

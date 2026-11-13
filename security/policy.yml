@@ -1,0 +1,23 @@
+# Politique des quality gates de securite (utilisee par la CI ET par scan-local.ps1 / hooks)
+#   block : severites qui FONT ECHOUER le job (fail-fast : les jobs suivants ne s'executent pas)
+#   tout le reste = avertissement (affiche dans le resume du job et les rapports, non bloquant)
+# Correspondance CVSS v3 : CRITICAL >= 9.0 | HIGH 7.0-8.9 | MEDIUM 4.0-6.9 | LOW 0.1-3.9
+# Un rapport manquant ou illisible = BLOCK (un scanner qui ne tourne pas ne doit pas "passer").
+version: 2
+
+tools:
+  gitleaks:      # un secret publie est compromis, quelle que soit sa "severite"
+    block: [CRITICAL, HIGH, MEDIUM, LOW, INFO, UNKNOWN]
+  semgrep:       # SAST : regles de severite ERROR (injection, RCE...)
+    block: [CRITICAL, HIGH]
+  bandit:        # SAST Python : severite HIGH avec une confiance au moins MEDIUM
+    block: [HIGH]
+    min_confidence_to_block: MEDIUM
+  trivy-fs:      # SCA : CVSS >= 7 ET une version corrigee existe (on bloque ce qu'on PEUT corriger)
+    block: [CRITICAL, HIGH]
+    block_only_if_fix_available: true
+  trivy-image:   # image Docker : meme regle (paquets OS + Python)
+    block: [CRITICAL, HIGH]
+    block_only_if_fix_available: true
+  zap:           # DAST : alertes de risque High
+    block: [HIGH]

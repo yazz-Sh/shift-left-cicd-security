@@ -1,0 +1,8 @@
+{
+  // Extensions de securite recommandees : VS Code les propose a l'ouverture du projet
+  "recommendations": [
+    "SonarSource.sonarlint-vscode",   // SonarQube for IDE (mode autonome, sans serveur)
+    "semgrep.semgrep",                // Semgrep : memes regles que les hooks et la CI
+    "ms-python.python"
+  ]
+}

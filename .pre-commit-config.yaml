@@ -1,0 +1,76 @@
+# Hooks "shift-left" : bloquent le COMMIT et le PUSH avant que le code ne quitte le poste.
+# Installation : pip install pre-commit
+#                pre-commit install --hook-type pre-commit --hook-type pre-push
+# Chaque depot de hooks est epingle par SHA de commit (un tag Git peut etre deplace, un SHA non).
+# Memes seuils que la CI (security/policy.yml) :
+#   gitleaks : tout secret bloque | bandit : HIGH + confiance >= MEDIUM | semgrep : severite ERROR
+#   trivy : CVSS >= 7 avec correctif disponible | pytest : 6 tests + couverture >= 80 %
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  # ---------------------------------------------------------------- secrets (faille 1)
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
+    hooks:
+      # variante Docker : le binaire natif ne compile pas sur ce poste (image epinglee par digest)
+      - id: gitleaks-docker
+        name: "gitleaks : secrets dans les fichiers indexes"
+        entry: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git --pre-commit --redact --staged --verbose --no-banner
+      - id: gitleaks-docker
+        alias: gitleaks-repo
+        name: "gitleaks : secrets dans tout le depot"
+        entry: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir . --config .gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # ---------------------------------------------------------------- SAST Python (faille 3)
+  - repo: https://github.com/PyCQA/bandit
+    rev: 92ae8b82fb422a639f0ed8d99e96cea769594e08  # frozen: 1.9.4
+    hooks:
+      - id: bandit
+        name: "bandit : SAST Python (HIGH, confiance >= MEDIUM)"
+        args: [-q, -lll, -ii]
+        files: ^app/facturation/
+      - id: bandit
+        alias: bandit-repo
+        name: "bandit : SAST Python sur tout le code"
+        args: [-q, -lll, -ii, -r, app/facturation]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # ---------------------------------------------------------------- SAST multi-regles (failles 2 et 3)
+  - repo: https://github.com/semgrep/pre-commit
+    rev: e85cc41d57d8c4cc95d97c8813051744e51bd061  # frozen: v1.184.0
+    hooks:
+      - id: semgrep
+        name: "semgrep : regles maison + p/python (ERROR)"
+        args: [--config, security/semgrep, --config, p/python, --severity, ERROR, --error, --quiet, --metrics, "off"]
+        files: ^app/.*\.py$
+      - id: semgrep
+        alias: semgrep-repo
+        name: "semgrep : tout le code"
+        args: [--config, security/semgrep, --config, p/python, --severity, ERROR, --error, --quiet, --metrics, "off", app]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+  # ---------------------------------------------------------------- tests + SCA (failles 1 a 4)
+  - repo: local
+    hooks:
+      - id: pytest
+        name: "pytest : 6 tests (dont 4 de securite), couverture >= 80 %"
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/scan-local.ps1 -Only tests
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-push]
+      - id: trivy-fs
+        name: "trivy fs : dependances vulnerables (CVSS >= 7 avec correctif)"
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/scan-local.ps1 -Only trivy
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

@@ -1,0 +1,13 @@
+# Configuration Gitleaks : regles par defaut + dossiers locaux exclus (pas du code du projet)
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dossiers generes localement"
+paths = [
+  '''(^|/)\.git/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)reports/''',
+  '''(^|/)\.pytest_cache/''',
+  '''__pycache__''',
+]
