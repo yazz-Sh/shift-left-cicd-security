@@ -14,4 +14,18 @@
 #    ticket: SEC-001
 #    created: 2026-11-13
 #    expires: 2027-02-13
-exemptions: []
+exemptions:
+  # Derogation appliquee dans SonarCloud (issue au statut "Accepted") ; tracee ici pour
+  # garder UN SEUL registre. gate.py l'ignore (SonarCloud n'est pas un outil du gate).
+  - id: EXC-2026-001
+    tool: sonarcloud
+    rule: "docker:S8544"
+    location: "app/Dockerfile"
+    justification: >-
+      Risque accepte. Les dependances directes sont epinglees en version exacte
+      (app/requirements.txt), scannees par Trivy (job 4) et inventoriees dans le SBOM CycloneDX.
+      Un fichier de verrouillage complet avec empreintes (hashes) est prevu en amelioration.
+    approved_by: "RSSI - Y. Shili"
+    ticket: SEC-001
+    created: 2026-11-13
+    expires: 2027-02-13

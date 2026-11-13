@@ -6,5 +6,11 @@
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
   "python.testing.pytestEnabled": true,
   "python.testing.cwd": "${workspaceFolder}/app",
-  "python.testing.pytestArgs": ["tests"]
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "sonarlint.connectedMode.project": {
+    "connectionId": "yazz-sh",
+    "projectKey": "yazz-Sh_shift-left-cicd-security"
+  }
 }

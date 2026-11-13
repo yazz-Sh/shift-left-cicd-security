@@ -30,6 +30,7 @@ AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 ```
 
+**VS Code (avant) :** Semgrep souligne les lignes 7-8 (`detected-aws-access-key-id-value`, `detected-aws-secret-access-key`).
 **Preuve :** Gitleaks (`aws-access-token`) ne remonte plus rien (pre-commit, pre-push, job `secrets_scan`) ;
 le test `test_no_hardcoded_secret` passe au vert.
 **Important :** une cle reellement commitee doit aussi etre **revoquee** (elle reste dans l'historique Git).
@@ -56,6 +57,7 @@ Code sur a taper :
     ).fetchall()
 ```
 
+**VS Code (avant) :** Semgrep souligne la ligne 52 (`sqlalchemy-execute-raw-query` ERROR, `formatted-sql-query` WARNING).
 **Preuve :** la regle Semgrep `facturation-sql-fstring` disparait (pre-commit, job `sast`) ;
 le test `test_sql_injection_blocked` passe ; l'attaque `customer=%' OR 1=1 --` ne renvoie plus la facture de Bob
 (`demo-attacks.ps1` affiche `PROTEGE`).
@@ -95,6 +97,7 @@ import re
 HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 ```
 
+**VS Code (avant) :** Semgrep souligne la ligne 61 (`subprocess-shell-true`).
 **Preuve :** Bandit `B602` (HIGH) et Semgrep `subprocess-shell-true` disparaissent ;
 le test `test_command_injection_blocked` passe (401 sans cle, 400 avec la cle d'Alice) ;
 l'attaque `host=127.0.0.1;id` ne renvoie plus `uid=` (`PROTEGE`).
@@ -116,6 +119,8 @@ Code sur a taper :
 urllib3==2.8.0
 ```
 
+**VS Code (avant) :** rien n'est souligne (aucune extension ne lit les CVE) : c'est le hook pytest au commit
+et Trivy au push qui l'attrapent.
 **Preuve :** Trivy fs ne remonte plus les 8 CVE HIGH corrigeables (CVE-2021-33503, CVE-2023-43804, ...)
 (pre-push, job `scan_dependencies`) ; le test `test_dependency_is_patched` passe
 (apres `pip install -r app/requirements.txt`, fait automatiquement par le hook pytest).
