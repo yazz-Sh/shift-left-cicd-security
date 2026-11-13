@@ -8,7 +8,8 @@ FROM ${BASE} AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY requirements.txt .
-RUN pip install --prefix=/install -r requirements.txt
+# --only-binary : aucun script setup.py execute au build (Sonar docker:S8541)
+RUN pip install --only-binary :all: --prefix=/install -r requirements.txt
 
 FROM ${BASE}
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
