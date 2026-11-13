@@ -232,7 +232,7 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          repo="ghcr.io/${GITHUB_REPOSITORY,,}/facturation"
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/shiftleft-facturation"
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag facturation:candidate "$repo:$GITHUB_SHA"
           docker push -q "$repo:$GITHUB_SHA"
