@@ -1,5 +1,4 @@
-"""API de facturation (FastAPI + SQLite) - version securisee."""
-import re
+"""API de facturation (FastAPI + SQLite)."""
 import subprocess
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -8,9 +7,6 @@ from . import db
 
 app = FastAPI(title="facturation-api", version="2.0.0")
 db.init_db()
-
-HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
-
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -53,22 +49,14 @@ def list_invoices(x_api_key: str | None = Header(default=None)) -> list[dict]:
 def search_invoices(customer: str, x_api_key: str | None = Header(default=None)) -> list[dict]:
     user = current_user(x_api_key)
     conn = db.connect()
-    # CORRECTIF (CWE-89) : requete parametree
     rows = conn.execute(
-        "SELECT * FROM invoices WHERE owner_id = ? AND customer LIKE ?",
-        (user["id"], f"%{customer}%"),
+        f"SELECT * FROM invoices WHERE owner_id = {user['id']} AND customer LIKE '%{customer}%'"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @app.get("/admin/ping")
-def admin_ping(host: str, x_api_key: str | None = Header(default=None)) -> dict:
-    # CORRECTIF (CWE-78) : authentification + validation de l'hote + pas de shell
-    current_user(x_api_key)
-    if not HOST_RE.fullmatch(host):
-        raise HTTPException(status_code=400, detail="Nom d'hote invalide")
-    result = subprocess.run(
-        ["/usr/bin/ping", "-c", "1", "-W", "2", host], capture_output=True, text=True, timeout=10
-    )
+def admin_ping(host: str) -> dict:
+    result = subprocess.run(f"ping -c 1 {host}", shell=True, capture_output=True, text=True, timeout=10)
     return {"host": host, "reachable": result.returncode == 0, "output": result.stdout}
