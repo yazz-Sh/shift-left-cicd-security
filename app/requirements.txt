@@ -1,5 +1,4 @@
 # Dependances epinglees (versions exactes)
 fastapi==0.162.5
 uvicorn==0.54.0
-# CORRECTIF (SCA) : urllib3 >= 2.8.0, aucune CVE HIGH connue (1.26.4 : CVE-2021-33503...)
-urllib3==2.8.0
+urllib3==1.26.4
